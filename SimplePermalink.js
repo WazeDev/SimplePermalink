@@ -1,24 +1,120 @@
 // ==UserScript==
-// @name            WME Simple Permalink (from WME KeepMyLayers) - fork
-// @namespace       https://greasyfork.org/users/30701-justins83-waze
-// @version         2020.06.01.01
+// @name            WME Simple Permalink (from WME KeepMyLayers)
+// @namespace       https://greasyfork.org/users/11629-TheLastTaterTot
+// @version         2023.03.06.01
 // @description     Shortens WME permalinks by removing any layer and filter specifications
-// @author          TheLastTaterTot (WazeDev team maintaining)
+// @author          TheLastTaterTot
 // @include         https://beta.waze.com/*editor*
 // @include         https://www.waze.com/*editor*
 // @exclude         https://www.waze.com/*user/editor/*
 // @grant           none
+// @require         https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
 // @run-at          document-end
 // ==/UserScript==
 /* jshint -W097 */
 
+/* global W */
+/* global OL */
+/* ecmaVersion 2017 */
+/* global $ */
+/* global I18n */
+/* global _ */
+/* global WazeWrap */
+/* global require */
+/* eslint curly: ["warn", "multi-or-nest"] */
+
+function loadSettings() {
+    var loadedSettings = $.parseJSON(localStorage.getItem("WMESimplePermalink_Settings"));
+    var defaultSettings = {
+        CopyPermalinkShortcut: ''
+    };
+    settings = loadedSettings ? loadedSettings : defaultSettings;
+    for (var prop in defaultSettings){
+        if (!settings.hasOwnProperty(prop))
+            settings[prop] = defaultSettings[prop];
+    }
+}
+
+function saveSettings() {
+    if (localStorage) {
+        var localsettings = {
+            OrthogonalizeShortcut: settings.CopyPermalinkShortcut
+        };
+
+        for (var name in W.accelerators.Actions) {
+            var TempKeys = "";
+            if (W.accelerators.Actions[name].group == 'wmesimplepermalink') {
+                if (W.accelerators.Actions[name].shortcut) {
+                    if (W.accelerators.Actions[name].shortcut.altKey === true)
+                        TempKeys += 'A';
+                    if (W.accelerators.Actions[name].shortcut.shiftKey === true)
+                        TempKeys += 'S';
+                    if (W.accelerators.Actions[name].shortcut.ctrlKey === true)
+                        TempKeys += 'C';
+                    if (TempKeys !== "")
+                        TempKeys += '+';
+                    if (W.accelerators.Actions[name].shortcut.keyCode)
+                        TempKeys += W.accelerators.Actions[name].shortcut.keyCode;
+                }
+                else
+                    TempKeys = "-1";
+                localsettings[name] = TempKeys;
+            }
+        }
+
+        localStorage.setItem("WMESimplePermalink_Settings", JSON.stringify(localsettings));
+    }
+}
+
+
 var initSimplePermalink = function() {
-    if (!document.getElementById('kmlPLPlaceholder')) {
-        var kmlKeyPresses = Array(2);
+    if (!document.getElementById('kmlPLPlaceholder')) {        var kmlKeyPresses = Array(2);
 
         var getKMLPermalink = function(currPl) {
-            var kmlShortPL = currPl.substr(currPl.lastIndexOf('editor')).replace(/&[^&]*Filter=[^&]*|&s=(\d+)/ig,'');
-            return location.origin + '/' + kmlShortPL;
+            var kmlShortPL = currPl.substr(currPl.lastIndexOf('editor')+6).replace(/&[^&]*Filter=[^&]*|&s=(\d+)/ig,'').replace("/", "");
+            return location.origin + location.pathname + kmlShortPL;
+        };
+
+        var copyPL = function(PLtoCopy){
+            copyToClipboard(PLtoCopy);
+
+                $('#kmlPLTooltip')[0].style.display = 'none';
+                $('#kmlPLTooltipCopied')[0].style.display = 'block';
+                setTimeout(function() {
+                    $('#kmlPLTooltipCopied')[0].style.display = 'none';
+                }, 2000);
+        };
+
+        var createStitchedPL = function(){
+            var newPL = $('#aKMLPermalink')[0].href;
+            var lon = newPL.match(/&lon=(-?\d{1,2}\.\d+)/)[1];
+            var lat = newPL.match(/&lat=(-?\d{1,2}\.\d+)/)[1];
+            var zoom = newPL.match(/zoom=\d+/)[1];
+
+            var centroid = W.map.getCenter().transform(W.map.projection, W.map.displayProjection);
+            newPL = newPL.replace(lon, Math.round(centroid.lon * 100000) / 100000);
+            newPL = newPL.replace(lat, Math.round(centroid.lat * 100000) / 100000);
+            newPL = newPL.replace(zoom, W.map.zoom);
+
+            let selectedFeatures = WazeWrap.getSelectedFeatures();
+            if(selectedFeatures.length > 0){
+                if(selectedFeatures[0].model.type === "mapComment")
+                    newPL += `&mapComments=${selectedFeatures[0].model.attributes.id}`;
+                else if(selectedFeatures[0].model.type === "venue")
+                    newPL += `&venues=${selectedFeatures[0].model.attributes.id}`;
+                else if(selectedFeatures[0].model.type === "segment"){
+                    newPL += "&segments=";
+                    for(let i=0; i<selectedFeatures.length; i++){
+                        if((i+1) < selectedFeatures.length)
+                            newPL += `${selectedFeatures[i].model.attributes.id},`;
+                        else
+                            newPL += `${selectedFeatures[i].model.attributes.id}`;
+                    }
+                }
+            }
+
+            copyPL(newPL);
+
         };
 
         var copyToClipboard = function(str) {
@@ -33,14 +129,16 @@ var initSimplePermalink = function() {
             if (e.metaKey || e.ctrlKey) kmlKeyPresses[0] = true;
             if (e.which === 67) kmlKeyPresses[1] = true;
             if (kmlKeyPresses[0] && kmlKeyPresses[1]) {
-                copyToClipboard(document.getElementById('aKMLPermalink').getAttribute('href'));
-
-                document.getElementById('kmlPLTooltip').style.display = 'none';
-                document.getElementById('kmlPLTooltipCopied').style.display = 'block';
-                setTimeout(function() {
-                    document.getElementById('kmlPLTooltipCopied').style.display = 'none';
-                }, 2000);
+                copyPL($('#aKMLPermalink')[0].href);
             }
+        };
+
+        loadSettings();
+        new WazeWrap.Interface.Shortcut('CopyPLShortcut', 'Copy Permalink', 'wmesimplepermalink', 'Simple Permalink', settings.CopyPermalinkShortcut, createStitchedPL, null).add();
+
+        //saves the set keyboard shortcut
+        window.onbeforeunload = function() {
+            saveSettings();
         };
 
         var kmlStyle = document.createElement("style");
@@ -60,8 +158,8 @@ var initSimplePermalink = function() {
 
         document.head.appendChild(kmlStyle);
 
-        var wazePermalinkEl = document.querySelector('.WazeControlPermalink>div>a.permalink'),
-            wazeCopyPlNote = wazePermalinkEl.getAttribute('data-original-title'),
+        var wazePermalinkEl = document.querySelector('.WazeControlPermalink>a.permalink'),
+            wazeCopyPlNote = wazePermalinkEl.getAttribute('title'),
             kmlCurrentPl = getKMLPermalink(wazePermalinkEl.getAttribute('href')),
             wazeControlPermalinkEl = wazePermalinkEl.parentNode,
             kmlMapPLContainer = document.createElement('div'),
@@ -123,39 +221,16 @@ var initSimplePermalink = function() {
         try {
             // Hide WME permalink, but allow TB to overrule with display: none;
             wazePermalinkEl.style.visibility = 'hidden';
+            document.getElementsByClassName('livemap-link')[0].style.paddingRight = '50px';
         } catch (err) {}
     }
 };
 
-////////////////////////////////////////////////////////////////////////////////////
-function waitForWazeElement() {
-    var waitCount = 0,
-        maxWait = 50; //30++ seconds
-
-    var tryInit_kmlPL = function() {
-        try {
-            if (waitCount < maxWait &&
-                document.getElementsByClassName('WazeControlPermalink').length) {
-                initSimplePermalink();
-                waitCount++; //for catching returns due to an undetected error
-            } else if (waitCount++ < maxWait) {
-                setTimeout(tryInit_kmlPL, 25 * waitCount);
-            } else {
-                console.error('WMESPL:',
-                    'Could not find necessary WME permalink element');
-            }
-        } catch (err) {
-            try { //try again once more in case it failed due to another script or WME hiccup... >:]
-                setTimeout(tryInit_kmlPL, 500);
-            } catch (err) {
-                console.error(
-                    'WMESPL:',
-                    'WME Simple Permalinks failed to load due to some kind of technical script error. :(');
-                console.error(err);
-            }
-        }
-    };
-    tryInit_kmlPL();
+function bootstrap(tries = 1) {
+    if (W && W.map && W.model && $ && $('.WazeControlPermalink').length > 0 && WazeWrap.Ready)
+        initSimplePermalink();
+    else if (tries < 1000)
+        setTimeout(function () {bootstrap(tries++);}, 200);
 }
 
-setTimeout(waitForWazeElement,2000);
+bootstrap();
